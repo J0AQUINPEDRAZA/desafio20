@@ -1,42 +1,95 @@
-const express = require("express");
-const passport = require("passport");
-const { engine } = require("express-handlebars");
+import express from "express";
+import { graphqlHTTP } from "express-graphql";
+import { buildSchema } from "graphql";
+import crypto from "crypto";
+import { productosMap, Producto } from "./productos.js";
+
+const schema = buildSchema(`
+  type Producto {
+    id: ID!
+    nombre: String,
+    price: Int,
+    thumbnail: String
+
+  }
+  input ProductoInput {
+    nombre: String,
+    price: Int
+    thumbnail: String
+  }
+  type Query {
+    getProducto(id: ID!): Producto,
+    getProductos(campo: String, valor: String): [Producto],
+  }
+  type Mutation {
+    createProducto(datos: ProductoInput): Producto
+    updateProducto(id: ID!, datos: ProductoInput): Producto,
+    deleteProducto(id: ID!): Producto,
+  }
+`);
+
 const app = express();
-const config = require("./config/config");
-const httpServer = require("http").createServer(app);
-const io = require("socket.io")(httpServer);
-const routerDatos = require("./routes/data.js");
-const websocket = require("./service/io.js");
-const { MongoSession, MongoDBService } = require("./config/services");
 
-app.use(express.static(__dirname + "/public"));
+app.use(express.static("public"));
 
-app.set("view engine", "hbs");
-app.set("views", "./views");
-app.engine(
-  "hbs",
-  engine({
-    extname: ".hbs",
-    defaultLayout: "index.hbs",
-    layoutsDir: __dirname + "/views/layouts",
-    partialsDir: __dirname + "/views/partials",
+app.use(
+  "/graphql",
+  graphqlHTTP({
+    schema: schema,
+    rootValue: {
+      getProductos,
+      getProducto,
+      createProducto,
+      updateProducto,
+      deleteProducto,
+    },
+    graphiql: true,
   })
 );
 
-MongoDBService();
+const PORT = 8080;
+app.listen(PORT, () => {
+  const msg = `Servidor corriendo en puerto: http://localhost:${PORT}`;
+  console.log(msg);
+});
 
-app.use(MongoSession);
+function getProductos({ campo, valor }) {
+  const productos = Object.values(productosMap);
+  if (campo && valor) {
+    return productos.filter((p) => p[campo] == valor);
+  } else {
+    return productos;
+  }
+}
 
-app.use(passport.initialize());
-app.use(passport.session());
+function getProducto({ id }) {
+  if (!productosMap[id]) {
+    throw new Error("Producto not found.");
+  }
+  return productosMap[id];
+}
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+function createProducto({ datos }) {
+  const id = crypto.randomBytes(10).toString("hex");
+  const nuevaProducto = new Producto(id, datos);
+  productosMap[id] = nuevaProducto;
+  return nuevaProducto;
+}
 
-app.use("/", routerDatos);
+function updateProducto({ id, datos }) {
+  if (!productosMap[id]) {
+    throw new Error("Producto not found");
+  }
+  const productoActualizado = new Producto(id, datos);
+  productosMap[id] = productoActualizado;
+  return productoActualizado;
+}
 
-websocket(io);
-
-httpServer.listen(config.PORT, () =>
-  console.log(`App listening on http://${config.HOST}:${config.PORT}`)
-);
+function deleteProducto({ id }) {
+  if (!productosMap[id]) {
+    throw new Error("Producto not found");
+  }
+  const productoBorrado = productosMap[id];
+  delete productosMap[id];
+  return productoBorrado;
+}
